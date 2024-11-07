@@ -1,109 +1,196 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include "a6.h"
+#include <string.h>
+#include <ctype.h>
 
-TreeNode* createLeafNode(int width, int height) {
-    TreeNode *node = (TreeNode*) malloc(sizeof(TreeNode));
-    node->type = LEAF;
-    node->width = width;
-    node->height = height;
-    node->x = node->y = 0;
-    node->left = node->right = NULL;
-    return node;
+typedef struct TreeNode {
+int block_label;
+int block_width;
+int block_height;
+char cut_type;
+int Xcoordinate, Ycoordinate;
+struct TreeNode* leftChild;
+struct TreeNode* rightChild;
+} TreeNode;
+
+TreeNode* buildTree(FILE* inputFile);
+void freeTree(TreeNode* rootNode);
+void compute_dimensions(TreeNode* currentNode, FILE* outputFile2);
+void assign_coordinates(TreeNode* currentNode, int xOffset, int yOffset, FILE* outputFile3);
+void pre_order_traversal(TreeNode* currentNode, FILE* outputFile1);
+char* trim_whitespace(char* str);
+TreeNode* createTreeNode(int label, int width, int height, char cut);
+
+char* trim_whitespace(char* str) {
+char* end;
+while (isspace((unsigned char)*str)) str++;
+if (*str == 0) return str;
+end = str + strlen(str) - 1;
+while (end > str && isspace((unsigned char)*end)) end--;
+end[1] = '\0';
+return str;
 }
 
-TreeNode* createCutNode(CutType cutType, TreeNode* left, TreeNode* right) {
-    TreeNode *node = (TreeNode*) malloc(sizeof(TreeNode));
-    node->type = CUT;
-    node->cutType = cutType;
-    node->left = left;
-    node->right = right;
-    node->width = node->height = 0;
-    return node;
+TreeNode* createTreeNode(int label, int width, int height, char cut) {
+TreeNode* newNode = (TreeNode*)malloc(sizeof(TreeNode));
+
+newNode->block_label = label;
+newNode->block_width = width;
+newNode->block_height = height;
+newNode->cut_type = cut;
+newNode->Xcoordinate = newNode->Ycoordinate = 0;
+newNode->leftChild = newNode->rightChild = NULL;
+return newNode;
 }
 
-void preOrderTraversal(TreeNode *root, FILE *output) {
-    if (!root) return;
-    if (root->type == LEAF)
-        fprintf(output, "Leaf: Width=%d, Height=%d\n", root->width, root->height);
-    else
-        fprintf(output, "Cut: %c\n", (root->cutType == HORIZONTAL) ? 'H' : 'V');
-    preOrderTraversal(root->left, output);
-    preOrderTraversal(root->right, output);
+void freeTree(TreeNode* rootNode) {
+if (rootNode) {
+freeTree(rootNode->leftChild);
+freeTree(rootNode->rightChild);
+free(rootNode);
+}
 }
 
-void calculateDimensions(TreeNode *root) {
-    if (!root) return;
-    if (root->type == LEAF) return;
-    calculateDimensions(root->left);
-    calculateDimensions(root->right);
-    if (root->cutType == HORIZONTAL) {
-        root->width = root->left->width > root->right->width ? root->left->width : root->right->width;
-        root->height = root->left->height + root->right->height;
-    } else {
-        root->width = root->left->width + root->right->width;
-        root->height = root->left->height > root->right->height ? root->left->height : root->right->height;
+TreeNode* buildTree(FILE* inputFile) {
+char inputLine[256];
+TreeNode* stack[100];
+TreeNode* currentNode = NULL;
+int top = -1;
+
+while (fgets(inputLine, sizeof(inputLine), inputFile)) {
+char* trimmedLine = trim_whitespace(inputLine);
+if (strlen(trimmedLine) == 0) continue;
+
+int label, width, height;
+char cutChar = trimmedLine[0];
+
+if (sscanf(trimmedLine, "%d(%d,%d)", &label, &width, &height) == 3) {
+currentNode = createTreeNode(label, width, height, 'N');
+}
+else if (cutChar == 'V' || cutChar == 'H') {
+if (top < 1) {
+fprintf(stderr, "Error: Not enough nodes for cut %c\n", cutChar);
+continue;
+}
+TreeNode* rightNode = stack[top--];
+TreeNode* leftNode = stack[top--];
+currentNode = createTreeNode(0, 0, 0, cutChar);
+currentNode->leftChild = leftNode;
+currentNode->rightChild = rightNode;
+
+if (cutChar == 'V') {
+currentNode->block_width = leftNode->block_width + rightNode->block_width;
+currentNode->block_height = (leftNode->block_height > rightNode->block_height) ? leftNode->block_height : rightNode->block_height;
+} else {
+currentNode->block_width = (leftNode->block_width > rightNode->block_width) ? leftNode->block_width : rightNode->block_width;
+currentNode->block_height = leftNode->block_height + rightNode->block_height;
+}
+}
+
+stack[++top] = currentNode;
+}
+
+if (top != 0) {
+fprintf(stderr, "Error: Incorrect number of nodes left in stack\n");
+return NULL;
+}
+
+return stack[top];
+}
+
+void pre_order_traversal(TreeNode* currentNode, FILE* outputFile1) {
+if (!currentNode) return;
+
+if (currentNode->cut_type != 'N') {
+fprintf(outputFile1, "%c\n", currentNode->cut_type);
+}
+
+if (currentNode->leftChild) {
+if (currentNode->leftChild->cut_type == 'N') {
+fprintf(outputFile1, "%d(%d,%d)\n", currentNode->leftChild->block_label, currentNode->leftChild->block_width, currentNode->leftChild->block_height);
+} else {
+pre_order_traversal(currentNode->leftChild, outputFile1);
+}
+}
+if (currentNode->rightChild) {
+if (currentNode->rightChild->cut_type == 'N') {
+fprintf(outputFile1, "%d(%d,%d)\n", currentNode->rightChild->block_label, currentNode->rightChild->block_width, currentNode->rightChild->block_height);
+} else {
+pre_order_traversal(currentNode->rightChild, outputFile1);
+}
+}
+}
+
+void compute_dimensions(TreeNode* currentNode, FILE* outputFile2) {
+if (!currentNode) return;
+
+compute_dimensions(currentNode->leftChild, outputFile2);
+compute_dimensions(currentNode->rightChild, outputFile2);
+
+if (currentNode->cut_type == 'V') {
+currentNode->block_width = currentNode->leftChild->block_width + currentNode->rightChild->block_width;
+currentNode->block_height = (currentNode->leftChild->block_height > currentNode->rightChild->block_height) ? currentNode->leftChild->block_height : currentNode->rightChild->block_height;
+} else if (currentNode->cut_type == 'H') {
+currentNode->block_width = (currentNode->leftChild->block_width > currentNode->rightChild->block_width) ? currentNode->leftChild->block_width : currentNode->rightChild->block_width;
+currentNode->block_height = currentNode->leftChild->block_height + currentNode->rightChild->block_height;
+}
+
+if (currentNode->cut_type == 'N') {
+fprintf(outputFile2, "%d(%d,%d)\n", currentNode->block_label, currentNode->block_width, currentNode->block_height);
+} else {
+fprintf(outputFile2, "%c(%d,%d)\n", currentNode->cut_type, currentNode->block_width, currentNode->block_height);
+}
+}
+
+void assign_coordinates(TreeNode* currentNode, int xOffset, int yOffset, FILE* outputFile3) {
+if (!currentNode) return;
+
+currentNode->Xcoordinate = xOffset;
+currentNode->Ycoordinate = yOffset;
+
+if (currentNode->cut_type == 'V') {
+assign_coordinates(currentNode->leftChild, xOffset, yOffset, outputFile3);
+assign_coordinates(currentNode->rightChild, xOffset + currentNode->leftChild->block_width, yOffset, outputFile3);
+} else if (currentNode->cut_type == 'H') {
+assign_coordinates(currentNode->leftChild, xOffset, yOffset + currentNode->rightChild->block_height, outputFile3);
+assign_coordinates(currentNode->rightChild, xOffset, yOffset, outputFile3);
+} else {
+fprintf(outputFile3, "%d((%d,%d)(%d,%d))\n", currentNode->block_label, currentNode->block_width, currentNode->block_height, currentNode->Xcoordinate, currentNode->Ycoordinate);
+}
+}
+
+int main (int argc, char* argv[]) {
+    if (argc != 5) {
+        fprintf(stderr, "Usage: %s in_file out_file1 out_file2 out_file3\n", argv[0]);
+        return 1;
     }
-}
-
-void calculateCoordinates(TreeNode *root, int x, int y) {
-    if (!root) return;
-    if (root->type == LEAF) {
-        root->x = x;
-        root->y = y;
-    } else {
-        if (root->cutType == HORIZONTAL) {
-            calculateCoordinates(root->left, x, y + root->right->height);
-            calculateCoordinates(root->right, x, y);
-        } else {
-            calculateCoordinates(root->left, x, y);
-            calculateCoordinates(root->right, x + root->left->width, y);
-        }
+    FILE* inputFile = fopen(argv[1], "r");
+    if (!inputFile) {
+        fprintf(stderr, "Error: Couldn't open input file %s\n", argv[1]);
+        return 1;
     }
-}
+    TreeNode* rootNode = buildTree(inputFile);
+    if (!rootNode) {
+        fclose(inputFile);
+        return 1;
+    }
+    FILE* outputFile1 = fopen(argv[2], "w");
+    FILE* outputFile2 = fopen(argv[3], "w");
+    FILE* outputFile3 = fopen(argv[4], "w");
 
-void postOrderTraversal(TreeNode *root, FILE *output) {
-    if (!root) return;
-    postOrderTraversal(root->left, output);
-    postOrderTraversal(root->right, output);
-    fprintf(output, "Node: Width=%d, Height=%d, X=%d, Y=%d\n", root->width, root->height, root->x, root->y);
-}
-
-TreeNode* buildExampleTree() {
-    TreeNode *left = createLeafNode(3, 2);
-    TreeNode *right = createLeafNode(2, 4);
-    TreeNode *cut = createCutNode(HORIZONTAL, left, right);
-    return cut;
-}
-
-int main(int argc, char *argv[]) {
-    if (argc != 4) {
-        fprintf(stderr, "Usage: %s <preorder_output> <dimensions_output> <coordinates_output>\n", argv[0]);
+    if (!outputFile1 || !outputFile2 || !outputFile3) {
+        fprintf(stderr, "Error: Coultn't open one of the output files\n");
+        fclose(inputFile);
         return 1;
     }
 
-    FILE *outFile1 = fopen(argv[1], "w");
-    FILE *outFile2 = fopen(argv[2], "w");
-    FILE *outFile3 = fopen(argv[3], "w");
-    if (!outFile1 || !outFile2 || !outFile3) {
-        perror("Error opening output files");
-        return 1;
-    }
+    pre_order_traversal(rootNode, outputFile1);
+    compute_dimensions(rootNode, outputFile2);
+    assign_coordinates(rootNode, 0, 0, outputFile3);
 
-    TreeNode *root = buildExampleTree();
-
-    preOrderTraversal(root, outFile1);
-
-    calculateDimensions(root);
-    postOrderTraversal(root, outFile2);
-
-    calculateCoordinates(root, 0, 0);
-    postOrderTraversal(root, outFile3);
-
-    fclose(outFile1);
-    fclose(outFile2);
-    fclose(outFile3);
-    free(root);
-
-    return 0;
+    freeTree(rootNode);
+    fclose(inputFile);
+    fclose(outputFile1);
+    fclose(outputFile2);
+    fclose(outputFile3);
 }
